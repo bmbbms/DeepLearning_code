@@ -1,16 +1,14 @@
-import numpy as np
-import os
 import gzip
-import struct
 import logging
+import struct
+import numpy as np
 import mxnet as mx
-import matplotlib.pyplot as plt
 
-data_dir = "/Users/yangsheng/py_code/Deeplearning_code/data/mnist"
+batch_size = 32
 
-# data_dir = "/Users/yangsheng/py_code/Deeplearning_code/data/fashion_data"
-
+# data_dir = "/Users/yangsheng/py_code/Deeplearning_code/data/mnist"
 logging.getLogger().setLevel(logging.DEBUG)
+data_dir = "/Users/yangsheng/py_code/Deeplearning_code/data/fashion_data"
 
 
 def read_data(label_url, image_url):
@@ -24,41 +22,51 @@ def read_data(label_url, image_url):
         image = np.fromstring(image_file.read(), dtype=np.uint8)
         image = image.reshape(len(label), 1, rows, cols)
         image = image.astype(np.float32) / 255.0
-    return label, image
+    return (label, image)
 
 
 (t_label, t_image) = read_data(data_dir + "/train-labels-idx1-ubyte.gz", data_dir + "/train-images-idx3-ubyte.gz")
 (val_label, val_image) = read_data(data_dir + "/t10k-labels-idx1-ubyte.gz", data_dir + "/t10k-images-idx3-ubyte.gz")
-print(t_image.shape)
-for i in range(10):
-    plt.subplot(1, 10, i + 1)
-    plt.imshow(t_image[i].reshape(28, 28), cmap="Greys_r")
-    plt.axis("off")
-plt.show()
-print('label:%s' % t_label[0:10])
 
-batch_size = 32
-# 迭代器
 train_iter = mx.io.NDArrayIter(t_image, t_label, batch_size, shuffle=True)
 val_iter = mx.io.NDArrayIter(val_image, val_label, batch_size, shuffle=True)
 
-data = mx.symbol.Variable("data")
+data = mx.symbol.Variable('data')
 
-flatten = mx.sym.Flatten(data=data, name="flatten")
+# 第一个卷积层
+conv1 = mx.sym.Convolution(data=data, name="conv1", kernel=(5, 5), num_filter=32)
 
-fc1 = mx.sym.FullyConnected(data=flatten, num_hidden=128, name='fc1')
-act1 = mx.sym.Activation(data=fc1, act_type="relu", name="act1")
+# BN层批规范化
+bn1 = mx.sym.BatchNorm(data=conv1, name="bn1", fix_gamma=False)
 
-fc2 = mx.sym.FullyConnected(data=act1, num_hidden=64, name='fc2')
-act2 = mx.sym.Activation(data=fc2, act_type="relu", name="act2")
+# 非线性激活层
+act1 = mx.sym.Activation(data=bn1, name="act1", act_type="relu")
 
-fc3 = mx.sym.FullyConnected(data=act2, num_hidden=10, name="fc3")
-net = mx.sym.SoftmaxOutput(data=fc3, name="softmax")
+# 池化层
+pool1 = mx.sym.Pooling(data=act1, name="pool1", pool_type="max", kernel=(3, 3), stride=(2, 2))
+
+# 第二个卷积层 和BN层
+conv2 = mx.sym.Convolution(data=pool1, name="conv2", kernel=(5, 5), num_filter=64)
+bn2 = mx.sym.BatchNorm(data=conv2, name="bn2", fix_gamma=False)
+# 非线性激活层
+act2 = mx.sym.Activation(data=bn2, act_type="relu", name="act2")
+# 第二个池化层
+pool2 = mx.sym.Pooling(data=act2, name="pool2", pool_type="max", kernel=(3, 3), stride=(2, 2))
+
+# 第三个卷积层相关
+conv3 = mx.sym.Convolution(data=pool2, name="conv3", kernel=(3, 3), num_filter=10)
+pool3 = mx.symbol.Pooling(data=conv3, kernel=(1, 1), pool_type="avg", name="pool3", global_pool=True)
+
+flatten = mx.sym.Flatten(data=pool3, name="flatten")
+
+net = mx.sym.SoftmaxOutput(data=flatten, name="softmax")
 
 shape = {"data": (batch_size, 1, 28, 28)}
 mx.viz.print_summary(symbol=net, shape=shape)
 
 # mx.viz.plot_network(symbol=net, shape=shape).view()
+mx.viz.plot_network(symbol=net, shape=shape).view()
+
 mx.viz.plot_network(symbol=net, shape=shape).view()
 
 module = mx.mod.Module(symbol=net)
@@ -70,7 +78,6 @@ module.fit(
     optimizer='sgd',
     optimizer_params={"learning_rate": 0.2,
                       'lr_scheduler': mx.lr_scheduler.FactorScheduler(step=60000 / batch_size, factor=0.9)},
-    num_epoch=25,
+    num_epoch=20,
     batch_end_callback=mx.callback.Speedometer(batch_size, 60000 / batch_size)
 )
-module.save_params("test")
